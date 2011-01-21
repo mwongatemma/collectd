@@ -36,6 +36,67 @@ typedef struct udb_query_preparation_area_s udb_query_preparation_area_t;
 typedef int (*udb_query_create_callback_t) (udb_query_t *q,
     oconfig_item_t *ci);
 
+struct udb_result_s; /* {{{ */
+typedef struct udb_result_s udb_result_t;
+struct udb_result_s
+{
+  char    *type;
+  char    *instance_prefix;
+  char   **instances;
+  size_t   instances_num;
+  char   **values;
+  size_t   values_num;
+
+  /* Legacy data */
+  int legacy_mode;
+  size_t legacy_position;
+  /* When in legacy mode:
+   * - type/ds hold the format of the data
+   * - instance_prefix is used as type-instance if non-NULL
+   * - legacy_position holds the index of the column to use as value.
+   */
+
+  udb_result_t *next;
+}; /* }}} */
+
+struct udb_query_s /* {{{ */
+{
+  char *name;
+  char *statement;
+  void *user_data;
+
+  int legacy_mode;
+
+  unsigned int min_version;
+  unsigned int max_version;
+
+  udb_result_t *results;
+}; /* }}} */
+
+struct udb_result_preparation_area_s /* {{{ */
+{
+  const   data_set_t *ds;
+  size_t *instances_pos;
+  size_t *values_pos;
+  char  **instances_buffer;
+  char  **values_buffer;
+
+  struct udb_result_preparation_area_s *next;
+}; /* }}} */
+typedef struct udb_result_preparation_area_s udb_result_preparation_area_t;
+
+struct udb_query_preparation_area_s /* {{{ */
+{
+  size_t column_num;
+  char *host;
+  char *plugin;
+  char *db_name;
+
+  int interval;
+
+  udb_result_preparation_area_t *result_prep_areas;
+}; /* }}} */
+
 /* 
  * Public functions
  */
