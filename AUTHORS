@@ -34,6 +34,10 @@ Anthony Gialluca <tonyabg at charter.net>
 Antony Dovgal <tony at daylessday.org>
  - memcached plugin.
 
+Aurélien Reynaud <collectd at wattapower.net>
+ - LPAR plugin.
+ - Various fixes for AIX, HP-UX and Solaris.
+
 Bruno Prémont <bonbons at linux-vserver.org>
  - BIND plugin.
  - Many bugreports and -fixes in various plugins,
@@ -71,6 +75,9 @@ Franck Lombardi
 
 Jason Pepas <cell at ices.utexas.edu>
  - nfs plugin.
+
+Jérôme Renard <jerome.renard at gmail.com>
+ - varnish plugin.
 
 Luboš Staněk <kolektor at atlas.cz>
  - sensors plugin improvements.
@@ -158,6 +165,9 @@ Rodolphe Quiédeville <rquiedeville at bearstech.com>
 
 Scott Garrett <sgarrett at technomancer.com>
  - tape plugin.
+
+Sebastien Pahl <sebastien.pahl at dotcloud.com>
+ - AMQP plugin.
 
 Simon Kuhnle <simon at blarzwurst.de>
  - OpenBSD code for the cpu and memory plugins.

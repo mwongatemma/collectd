@@ -11,7 +11,7 @@
 ##############################################################################
 
 #Hostname    "localhost"
-FQDNLookup   true
+#FQDNLookup   true
 #BaseDir     "@prefix@/var/lib/@PACKAGE_NAME@"
 #PIDFile     "@prefix@/var/run/@PACKAGE_NAME@.pid"
 #PluginDir   "@prefix@/lib/@PACKAGE_NAME@"
@@ -52,6 +52,7 @@ FQDNLookup   true
 # to missing dependencies or because they have been deactivated explicitly.  #
 ##############################################################################
 
+#@BUILD_PLUGIN_AMQP_TRUE@LoadPlugin amqp
 #@BUILD_PLUGIN_APACHE_TRUE@LoadPlugin apache
 #@BUILD_PLUGIN_APCUPS_TRUE@LoadPlugin apcups
 #@BUILD_PLUGIN_APPLE_SENSORS_TRUE@LoadPlugin apple_sensors
@@ -85,6 +86,7 @@ FQDNLookup   true
 #@BUILD_PLUGIN_JAVA_TRUE@LoadPlugin java
 #@BUILD_PLUGIN_LIBVIRT_TRUE@LoadPlugin libvirt
 @BUILD_PLUGIN_LOAD_TRUE@@BUILD_PLUGIN_LOAD_TRUE@LoadPlugin load
+#@BUILD_PLUGIN_LPAR_TRUE@LoadPlugin lpar
 #@BUILD_PLUGIN_MADWIFI_TRUE@LoadPlugin madwifi
 #@BUILD_PLUGIN_MBMON_TRUE@LoadPlugin mbmon
 #@BUILD_PLUGIN_MEMCACHEC_TRUE@LoadPlugin memcachec
@@ -114,6 +116,7 @@ FQDNLookup   true
 #@BUILD_PLUGIN_PROCESSES_TRUE@LoadPlugin processes
 #@BUILD_PLUGIN_PROTOCOLS_TRUE@LoadPlugin protocols
 #@BUILD_PLUGIN_PYTHON_TRUE@LoadPlugin python
+#@BUILD_PLUGIN_REDIS_TRUE@LoadPlugin redis
 #@BUILD_PLUGIN_ROUTEROS_TRUE@LoadPlugin routeros
 #@BUILD_PLUGIN_RRDCACHED_TRUE@LoadPlugin rrdcached
 @LOAD_PLUGIN_RRDTOOL@LoadPlugin rrdtool
@@ -133,10 +136,12 @@ FQDNLookup   true
 #@BUILD_PLUGIN_UPTIME_TRUE@LoadPlugin uptime
 #@BUILD_PLUGIN_USERS_TRUE@LoadPlugin users
 #@BUILD_PLUGIN_UUID_TRUE@LoadPlugin uuid
+#@BUILD_PLUGIN_VARNISH_TRUE@LoadPlugin varnish
 #@BUILD_PLUGIN_VMEM_TRUE@LoadPlugin vmem
 #@BUILD_PLUGIN_VSERVER_TRUE@LoadPlugin vserver
 #@BUILD_PLUGIN_WIRELESS_TRUE@LoadPlugin wireless
 #@BUILD_PLUGIN_WRITE_HTTP_TRUE@LoadPlugin write_http
+#@BUILD_PLUGIN_WRITE_REDIS_TRUE@LoadPlugin write_redis
 #@BUILD_PLUGIN_XMMS_TRUE@LoadPlugin xmms
 #@BUILD_PLUGIN_ZFS_ARC_TRUE@LoadPlugin zfs_arc
 
@@ -147,11 +152,27 @@ FQDNLookup   true
 # ription of those options is available in the collectd.conf(5) manual page. #
 ##############################################################################
 
+#<Plugin "amqp">
+#  <Publish "name">
+#    Host "localhost"
+#    Port "5672"
+#    VHost "/"
+#    User "guest"
+#    Password "guest"
+#    Exchange "amq.fanout"
+#    RoutingKey "collectd"
+#    Persistent false
+#    StoreRates false
+#  </Publish>
+#</Plugin>
+
 #<Plugin apache>
-#	URL "http://localhost/status?auto"
-#	User "www-user"
-#	Password "secret"
-#	CACert "/etc/ssl/ca.crt"
+#  <Instance "local">
+#    URL "http://localhost/status?auto"
+#    User "www-user"
+#    Password "secret"
+#    CACert "/etc/ssl/ca.crt"
+#  </Instance>
 #</Plugin>
 
 #<Plugin apcups>
@@ -338,13 +359,6 @@ FQDNLookup   true
 #<Plugin hddtemp>
 #  Host "127.0.0.1"
 #  Port "7634"
-#
-#  #----------------------------------------------------------------#
-#  # `TranslateDevicename' enables backwards compatibility behavior #
-#  # and is enabled by default. Setting this option to `false' is   #
-#  # highly recommended.                                            #
-#  #----------------------------------------------------------------#
-#  TranslateDevicename false
 #</Plugin>
 
 #<Plugin interface>
@@ -390,6 +404,12 @@ FQDNLookup   true
 #	InterfaceDevice "name:device"
 #	IgnoreSelected false
 #	HostnameFormat name
+#	InterfaceFormat name
+#</Plugin>
+
+#<Plugin lpar>
+#	CpuPoolStats   false
+#	ReportBySerial false
 #</Plugin>
 
 #<Plugin madwifi>
@@ -737,6 +757,14 @@ FQDNLookup   true
 #	</Module>
 #</Plugin>
 
+#<Plugin redis>
+#   <Node example>
+#      Host "redis.example.com"
+#      Port "6379"
+#      Timeout 2000
+#   </Node>
+#</Plugin>
+
 #<Plugin routeros>
 #	<Router>
 #		Host "router.example.com"
@@ -884,10 +912,32 @@ FQDNLookup   true
 #	SocketFile "@prefix@/var/run/@PACKAGE_NAME@-unixsock"
 #	SocketGroup "collectd"
 #	SocketPerms "0660"
+#	DeleteSocket false
 #</Plugin>
 
 #<Plugin uuid>
 #	UUIDFile "/etc/uuid"
+#</Plugin>
+
+#<Plugin varnish>
+#   This tag support an argument if you want to
+#   monitor the local instance just use </Instance>
+#   If you prefer defining another instance you can do
+#   so by using <Instance "myinstance">
+#   <Instance>
+#      CollectCache true
+#      CollectBackend true
+#      CollectConnections true
+#      CollectSHM true
+#      CollectESI false
+#      CollectFetch false
+#      CollectHCB false
+#      CollectSMA false
+#      CollectSMS false
+#      CollectSM false
+#      CollectTotals false
+#      CollectWorkers false
+#   </Instance>
 #</Plugin>
 
 #<Plugin vmem>
@@ -904,6 +954,14 @@ FQDNLookup   true
 #		Format "Command"
 #		StoreRates false
 #	</URL>
+#</Plugin>
+
+#<Plugin write_redis>
+#	<Node "example">
+#		Host "localhost"
+#		Port "6379"
+#		Timeout 1000
+#	</Node>
 #</Plugin>
 
 ##############################################################################
@@ -935,3 +993,52 @@ FQDNLookup   true
 #<Chain "PostCache">
 #  Target "write"
 #</Chain>
+
+##############################################################################
+# Threshold configuration                                                    #
+#----------------------------------------------------------------------------#
+# The following outlines how to configure collectd's threshold checking      #
+# plugin. The plugin and possible configuration options are documented in    #
+# the collectd-threshold(5) manual page.                                     #
+##############################################################################
+
+#@BUILD_PLUGIN_THRESHOLD_TRUE@LoadPlugin "threshold"
+#<Plugin "threshold">
+#  <Type "foo">
+#    WarningMin    0.00
+#    WarningMax 1000.00
+#    FailureMin    0.00
+#    FailureMax 1200.00
+#    Invert false
+#    Instance "bar"
+#  </Type>
+#
+#  <Plugin "interface">
+#    Instance "eth0"
+#    <Type "if_octets">
+#      FailureMax 10000000
+#      DataSource "rx"
+#    </Type>
+#  </Plugin>
+#
+#  <Host "hostname">
+#    <Type "cpu">
+#      Instance "idle"
+#      FailureMin 10
+#    </Type>
+#
+#    <Plugin "memory">
+#      <Type "memory">
+#        Instance "cached"
+#        WarningMin 100000000
+#      </Type>
+#    </Plugin>
+#
+#    <Type "load">
+#    	DataSource "midterm"
+#    	FailureMax 4
+#    	Hits 3
+#    	Hysteresis 3
+#    </Type>
+#  </Host>
+#</Plugin>

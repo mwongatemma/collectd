@@ -1,8 +1,9 @@
 /**
  * collectd - src/swap.c
- * Copyright (C) 2005-2009  Florian octo Forster
+ * Copyright (C) 2005-2010  Florian octo Forster
  * Copyright (C) 2009       Stefan Völkel
  * Copyright (C) 2009       Manuel Sanmartin
+ * Copyright (C) 2010       Aurélien Reynaud
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -18,8 +19,9 @@
  * 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
  *
  * Authors:
- *   Florian octo Forster <octo at verplant.org>
+ *   Florian octo Forster <octo at collectd.org>
  *   Manuel Sanmartin
+ *   Aurélien Reynaud <collectd at wattapower.net>
  **/
 
 #if HAVE_CONFIG_H
@@ -71,14 +73,17 @@
 /* No global variables */
 /* #endif KERNEL_LINUX */
 
-#elif HAVE_LIBKSTAT
+#elif HAVE_SWAPCTL && HAVE_SWAPCTL_TWO_ARGS
 static derive_t pagesize;
-static kstat_t *ksp;
-/* #endif HAVE_LIBKSTAT */
 
-#elif HAVE_SWAPCTL
-/* No global variables */
-/* #endif HAVE_SWAPCTL */
+static const char *config_keys[] =
+{
+	"ReportByDevice"
+};
+static int config_keys_num = STATIC_ARRAY_SIZE (config_keys);
+
+static _Bool report_by_device = 0;
+/* #endif HAVE_SWAPCTL && HAVE_SWAPCTL_TWO_ARGS */
 
 #elif defined(VM_SWAPUSAGE)
 /* No global variables */
@@ -108,15 +113,9 @@ static int swap_init (void)
 	/* No init stuff */
 /* #endif KERNEL_LINUX */
 
-#elif HAVE_LIBKSTAT
+#elif HAVE_SWAPCTL && HAVE_SWAPCTL_TWO_ARGS
 	/* getpagesize(3C) tells me this does not fail.. */
 	pagesize = (derive_t) getpagesize ();
-	if (get_kstat (&ksp, "unix", 0, "system_pages"))
-		ksp = NULL;
-/* #endif HAVE_LIBKSTAT */
-
-#elif HAVE_SWAPCTL
-	/* No init stuff */
 /* #endif HAVE_SWAPCTL */
 
 #elif defined(VM_SWAPUSAGE)
@@ -155,7 +154,8 @@ static int swap_init (void)
 	return (0);
 }
 
-static void swap_submit (const char *type_instance, derive_t value, unsigned type)
+static void swap_submit_inst (const char *plugin_instance, /* {{{ */
+		const char *type_instance, derive_t value, unsigned type)
 {
 	value_t values[1];
 	value_list_t vl = VALUE_LIST_INIT;
@@ -179,14 +179,22 @@ static void swap_submit (const char *type_instance, derive_t value, unsigned typ
 	vl.values_len = 1;
 	sstrncpy (vl.host, hostname_g, sizeof (vl.host));
 	sstrncpy (vl.plugin, "swap", sizeof (vl.plugin));
+	if (plugin_instance != NULL)
+		sstrncpy (vl.plugin_instance, plugin_instance, sizeof (vl.plugin_instance));
 	sstrncpy (vl.type_instance, type_instance, sizeof (vl.type_instance));
 
 	plugin_dispatch_values (&vl);
-} /* void swap_submit */
+} /* }}} void swap_submit_inst */
 
-static int swap_read (void)
+static void swap_submit (const char *type_instance, derive_t value, unsigned type)
 {
+	swap_submit_inst (/* plugin instance = */ NULL,
+			type_instance, value, type);
+}
+
 #if KERNEL_LINUX
+static int swap_read (void) /* {{{ */
+{
 	FILE *fh;
 	char buffer[1024];
 
@@ -289,9 +297,24 @@ static int swap_read (void)
 	swap_submit ("cached", 1024 * swap_cached, DS_TYPE_GAUGE);
 	swap_submit ("in",  swap_in,  DS_TYPE_DERIVE);
 	swap_submit ("out", swap_out, DS_TYPE_DERIVE);
+
+	return (0);
+} /* }}} int swap_read */
 /* #endif KERNEL_LINUX */
 
-#elif HAVE_LIBKSTAT
+/*
+ * Under Solaris, two mechanisms can be used to read swap statistics, swapctl
+ * and kstat. The former reads physical space used on a device, the latter
+ * reports the view from the virtual memory system. It was decided that the
+ * kstat-based information should be moved to the "vmem" plugin, but nobody
+ * with enough Solaris experience was available at that time to do this. The
+ * code below is still there for your reference but it won't be activated in
+ * *this* plugin again. --octo
+ */
+#elif 0 && HAVE_LIBKSTAT
+/* kstat-based read function */
+static int swap_read_kstat (void) /* {{{ */
+{
 	derive_t swap_alloc;
 	derive_t swap_resv;
 	derive_t swap_avail;
@@ -335,9 +358,168 @@ static int swap_read (void)
 	swap_submit ("used", swap_alloc, DS_TYPE_GAUGE);
 	swap_submit ("free", swap_avail, DS_TYPE_GAUGE);
 	swap_submit ("reserved", swap_resv, DS_TYPE_GAUGE);
-/* #endif HAVE_LIBKSTAT */
 
-#elif HAVE_SWAPCTL
+	return (0);
+} /* }}} int swap_read_kstat */
+/* #endif 0 && HAVE_LIBKSTAT */
+
+#elif HAVE_SWAPCTL && HAVE_SWAPCTL_TWO_ARGS
+/* swapctl-based read function */
+static int swap_read (void) /* {{{ */
+{
+        swaptbl_t *s;
+	char *s_paths;
+        int swap_num;
+        int status;
+        int i;
+
+        derive_t avail = 0;
+        derive_t total = 0;
+
+        swap_num = swapctl (SC_GETNSWP, NULL);
+        if (swap_num < 0)
+        {
+                ERROR ("swap plugin: swapctl (SC_GETNSWP) failed with status %i.",
+                                swap_num);
+                return (-1);
+        }
+        else if (swap_num == 0)
+                return (0);
+
+	/* Allocate and initialize the swaptbl_t structure */
+        s = (swaptbl_t *) smalloc (swap_num * sizeof (swapent_t) + sizeof (struct swaptable));
+        if (s == NULL)
+        {
+                ERROR ("swap plugin: smalloc failed.");
+                return (-1);
+        }
+
+	/* Memory to store the path names. We only use these paths when the
+	 * separate option has been configured, but it's easier to just
+	 * allocate enough memory in any case. */
+	s_paths = calloc (swap_num, PATH_MAX);
+	if (s_paths == NULL)
+	{
+		ERROR ("swap plugin: malloc failed.");
+		sfree (s);
+		return (-1);
+	}
+        for (i = 0; i < swap_num; i++)
+		s->swt_ent[i].ste_path = s_paths + (i * PATH_MAX);
+        s->swt_n = swap_num;
+
+        status = swapctl (SC_LIST, s);
+        if (status < 0)
+        {
+		char errbuf[1024];
+                ERROR ("swap plugin: swapctl (SC_LIST) failed: %s",
+				sstrerror (errno, errbuf, sizeof (errbuf)));
+		sfree (s_paths);
+                sfree (s);
+                return (-1);
+        }
+	else if (swap_num < status)
+	{
+		/* more elements returned than requested */
+		ERROR ("swap plugin: I allocated memory for %i structure%s, "
+				"but swapctl(2) claims to have returned %i. "
+				"I'm confused and will give up.",
+				swap_num, (swap_num == 1) ? "" : "s",
+				status);
+		sfree (s_paths);
+                sfree (s);
+                return (-1);
+	}
+	else if (swap_num > status)
+		/* less elements returned than requested */
+		swap_num = status;
+
+        for (i = 0; i < swap_num; i++)
+        {
+		char path[PATH_MAX];
+		derive_t this_total;
+		derive_t this_avail;
+
+                if ((s->swt_ent[i].ste_flags & ST_INDEL) != 0)
+                        continue;
+
+		this_total = ((derive_t) s->swt_ent[i].ste_pages) * pagesize;
+		this_avail = ((derive_t) s->swt_ent[i].ste_free)  * pagesize;
+
+		/* Shortcut for the "combined" setting (default) */
+		if (!report_by_device)
+		{
+			avail += this_avail;
+			total += this_total;
+			continue;
+		}
+
+		/* Okay, using "/" as swap device would be super-weird, but
+		 * we'll handle it anyway to cover all cases. */
+		if (strcmp ("/", s->swt_ent[i].ste_path) == 0)
+			sstrncpy (path, "root", sizeof (path));
+		else
+		{
+			int j;
+
+			s->swt_ent[i].ste_path[PATH_MAX - 1] = 0;
+			/* Don't copy the leading slash */
+			sstrncpy (path, &s->swt_ent[i].ste_path[1], sizeof (path));
+			/* Convert slashes to dashes, just like the "df" plugin. */
+			for (j = 0; path[j] != 0; j++)
+				if (path[j] == '/')
+					path[j] = '-';
+		}
+
+		swap_submit_inst (path, "used", this_total - this_avail, DS_TYPE_GAUGE);
+		swap_submit_inst (path, "free", this_avail, DS_TYPE_GAUGE);
+        } /* for (swap_num) */
+
+        if (total < avail)
+        {
+                ERROR ("swap plugin: Total swap space (%"PRIi64") "
+                                "is less than free swap space (%"PRIi64").",
+                                total, avail);
+		sfree (s_paths);
+                sfree (s);
+                return (-1);
+        }
+
+	/* If the "separate" option was specified (report_by_device == 2), all
+	 * values have already been dispatched from within the loop. */
+	if (!report_by_device)
+	{
+		swap_submit ("used", total - avail, DS_TYPE_GAUGE);
+		swap_submit ("free", avail, DS_TYPE_GAUGE);
+	}
+
+	sfree (s_paths);
+        sfree (s);
+	return (0);
+} /* }}} int swap_read */
+
+/* Configuration: Present when swapctl or both methods are available. */
+static int swap_config (const char *key, const char *value) /* {{{ */
+{
+	if (strcasecmp ("ReportByDevice", key) == 0)
+	{
+		if (IS_TRUE (value))
+			report_by_device = 1;
+		else
+			report_by_device = 0;
+	}
+	else
+	{
+		return (-1);
+	}
+
+	return (0);
+} /* }}} int swap_config */
+/* #endif HAVE_SWAPCTL && HAVE_SWAPCTL_TWO_ARGS */
+
+#elif HAVE_SWAPCTL && HAVE_SWAPCTL_THREE_ARGS
+static int swap_read (void) /* {{{ */
+{
 	struct swapent *swap_entries;
 	int swap_num;
 	int status;
@@ -346,18 +528,6 @@ static int swap_read (void)
 	derive_t used  = 0;
 	derive_t total = 0;
 
-	/*
-	 * XXX: This is the syntax for the *BSD `swapctl', which has the
-	 * following prototype:
-	 *   swapctl (int cmd, void *arg, int misc);
-	 *
-	 * HP-UX and Solaris (and possibly other UNIXes) provide `swapctl',
-	 * too, but with the following prototype:
-	 *   swapctl (int cmd, void *arg);
-	 *
-	 * Solaris is usually handled in the KSTAT case above. For other UNIXes
-	 * a separate case for the other version of `swapctl' may be necessary.
-	 */
 	swap_num = swapctl (SWAP_NSWAP, NULL, 0);
 	if (swap_num < 0)
 	{
@@ -413,9 +583,14 @@ static int swap_read (void)
 	swap_submit ("free", total - used, DS_TYPE_GAUGE);
 
 	sfree (swap_entries);
-/* #endif HAVE_SWAPCTL */
+
+	return (0);
+} /* }}} int swap_read */
+/* #endif HAVE_SWAPCTL && HAVE_SWAPCTL_THREE_ARGS */
 
 #elif defined(VM_SWAPUSAGE)
+static int swap_read (void) /* {{{ */
+{
 	int              mib[3];
 	size_t           mib_len;
 	struct xsw_usage sw_usage;
@@ -433,9 +608,14 @@ static int swap_read (void)
 	/* The returned values are bytes. */
 	swap_submit ("used", (derive_t) sw_usage.xsu_used, DS_TYPE_GAUGE);
 	swap_submit ("free", (derive_t) sw_usage.xsu_avail, DS_TYPE_GAUGE);
+
+	return (0);
+} /* }}} int swap_read */
 /* #endif VM_SWAPUSAGE */
 
 #elif HAVE_LIBKVM_GETSWAPINFO
+static int swap_read (void) /* {{{ */
+{
 	struct kvm_swap data_s;
 	int             status;
 
@@ -461,9 +641,14 @@ static int swap_read (void)
 
 	swap_submit ("used", used, DS_TYPE_GAUGE);
 	swap_submit ("free", free, DS_TYPE_GAUGE);
+
+	return (0);
+} /* }}} int swap_read */
 /* #endif HAVE_LIBKVM_GETSWAPINFO */
 
 #elif HAVE_LIBSTATGRAB
+static int swap_read (void) /* {{{ */
+{
 	sg_swap_stats *swap;
 
 	swap = sg_get_swap_stats ();
@@ -473,9 +658,14 @@ static int swap_read (void)
 
 	swap_submit ("used", (derive_t) swap->used, DS_TYPE_GAUGE);
 	swap_submit ("free", (derive_t) swap->free, DS_TYPE_GAUGE);
+
+	return (0);
+} /* }}} int swap_read */
 /* #endif  HAVE_LIBSTATGRAB */
 
 #elif HAVE_PERFSTAT
+static int swap_read (void) /* {{{ */
+{
         if(perfstat_memory_total(NULL, &pmemory, sizeof(perfstat_memory_total_t), 1) < 0)
 	{
                 char errbuf[1024];
@@ -485,13 +675,18 @@ static int swap_read (void)
         }
 	swap_submit ("used", (derive_t) (pmemory.pgsp_total - pmemory.pgsp_free) * pagesize, DS_TYPE_GAUGE);
 	swap_submit ("free", (derive_t) pmemory.pgsp_free * pagesize , DS_TYPE_GAUGE);
-#endif /* HAVE_PERFSTAT */
 
 	return (0);
-} /* int swap_read */
+} /* }}} int swap_read */
+#endif /* HAVE_PERFSTAT */
 
 void module_register (void)
 {
+#if HAVE_SWAPCTL && HAVE_SWAPCTL_TWO_ARGS
+	plugin_register_config ("swap", swap_config, config_keys, config_keys_num);
+#endif
 	plugin_register_init ("swap", swap_init);
 	plugin_register_read ("swap", swap_read);
 } /* void module_register */
+
+/* vim: set fdm=marker : */

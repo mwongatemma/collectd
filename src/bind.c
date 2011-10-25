@@ -1,7 +1,7 @@
 /**
  * collectd - src/bind.c
- * Copyright (C) 2009  Bruno Prémont
- * Copyright (C) 2009  Florian Forster
+ * Copyright (C) 2009       Bruno Prémont
+ * Copyright (C) 2009,2010  Florian Forster
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -18,14 +18,22 @@
  *
  * Authors:
  *   Bruno Prémont <bonbons at linux-vserver.org>
- *   Florian Forster <octo at verplant.org>
+ *   Florian Forster <octo at collectd.org>
  **/
 
 #include "config.h"
 
-#ifndef _XOPEN_SOURCE
-# define _XOPEN_SOURCE 600 /* glibc2 needs this for strptime */
-#endif
+#if STRPTIME_NEEDS_STANDARDS
+# ifndef _ISOC99_SOURCE
+#  define _ISOC99_SOURCE 1
+# endif
+# ifndef _POSIX_C_SOURCE
+#  define _POSIX_C_SOURCE 200112L
+# endif
+# ifndef _XOPEN_SOURCE
+#  define _XOPEN_SOURCE 500
+# endif
+#endif /* STRPTIME_NEEDS_STANDARDS */
 
 #include "collectd.h"
 #include "common.h"
@@ -241,7 +249,7 @@ static void submit (time_t ts, const char *plugin_instance, /* {{{ */
 
   vl.values = values;
   vl.values_len = 1;
-  vl.time = ts;
+  vl.time = TIME_T_TO_CDTIME_T (ts);
   sstrncpy(vl.host, hostname_g, sizeof(vl.host));
   sstrncpy(vl.plugin, "bind", sizeof(vl.plugin));
   if (plugin_instance) {
@@ -337,36 +345,31 @@ static int bind_xml_list_callback (const char *name, /* {{{ */
   return (0);
 } /* }}} int bind_xml_list_callback */
 
-static int bind_xml_read_counter (xmlDoc *doc, xmlNode *node, /* {{{ */
-    counter_t *ret_value)
+static int bind_xml_read_derive (xmlDoc *doc, xmlNode *node, /* {{{ */
+    derive_t *ret_value)
 {
-  char *str_ptr, *end_ptr;
-  long long int value;
+  char *str_ptr;
+  value_t value;
+  int status;
 
   str_ptr = (char *) xmlNodeListGetString (doc, node->xmlChildrenNode, 1);
   if (str_ptr == NULL)
   {
-    ERROR ("bind plugin: bind_xml_read_counter: xmlNodeListGetString failed.");
+    ERROR ("bind plugin: bind_xml_read_derive: xmlNodeListGetString failed.");
     return (-1);
   }
 
-  errno = 0;
-  value = strtoll (str_ptr, &end_ptr, 10);
-  xmlFree(str_ptr);
-  if (str_ptr == end_ptr || errno)
+  status = parse_value (str_ptr, &value, DS_TYPE_DERIVE);
+  if (status != 0)
   {
-    if (errno && (value < 0))
-      ERROR ("bind plugin: bind_xml_read_counter: strtoll failed with underflow.");
-    else if (errno && (value > 0))
-      ERROR ("bind plugin: bind_xml_read_counter: strtoll failed with overflow.");
-    else
-      ERROR ("bind plugin: bind_xml_read_counter: strtoll failed.");
+    ERROR ("bind plugin: Parsing string \"%s\" to derive value failed.",
+        str_ptr);
     return (-1);
   }
 
-  *ret_value = value;
+  *ret_value = value.derive;
   return (0);
-} /* }}} int bind_xml_read_counter */
+} /* }}} int bind_xml_read_derive */
 
 static int bind_xml_read_gauge (xmlDoc *doc, xmlNode *node, /* {{{ */
     gauge_t *ret_value)
@@ -527,7 +530,7 @@ static int bind_parse_generic_name_value (const char *xpath_expression, /* {{{ *
       if (ds_type == DS_TYPE_GAUGE)
         status = bind_xml_read_gauge (doc, counter, &value.gauge);
       else
-        status = bind_xml_read_counter (doc, counter, &value.counter);
+        status = bind_xml_read_derive (doc, counter, &value.derive);
       if (status != 0)
         continue;
 
@@ -600,7 +603,7 @@ static int bind_parse_generic_value_list (const char *xpath_expression, /* {{{ *
       if (ds_type == DS_TYPE_GAUGE)
         status = bind_xml_read_gauge (doc, child, &value.gauge);
       else
-        status = bind_xml_read_counter (doc, child, &value.counter);
+        status = bind_xml_read_derive (doc, child, &value.derive);
       if (status != 0)
         continue;
 

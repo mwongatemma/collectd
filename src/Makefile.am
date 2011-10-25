@@ -21,7 +21,7 @@ AM_CPPFLAGS += -DPLUGINDIR='"${pkglibdir}"'
 AM_CPPFLAGS += -DPKGDATADIR='"${pkgdatadir}"'
 
 sbin_PROGRAMS = collectd collectdmon
-bin_PROGRAMS = collectd-nagios
+bin_PROGRAMS = collectd-nagios collectdctl
 
 collectd_SOURCES = collectd.c collectd.h \
 		   common.c common.h \
@@ -40,7 +40,7 @@ collectd_SOURCES = collectd.c collectd.h \
 		   utils_match.c utils_match.h \
 		   utils_subst.c utils_subst.h \
 		   utils_tail.c utils_tail.h \
-		   utils_threshold.c utils_threshold.h \
+		   utils_time.c utils_time.h \
 		   types_list.c types_list.h
 
 collectd_CPPFLAGS =  $(AM_CPPFLAGS) $(LTDLINCL)
@@ -105,10 +105,35 @@ endif
 collectd_nagios_LDADD += libcollectdclient/libcollectdclient.la
 collectd_nagios_DEPENDENCIES = libcollectdclient/libcollectdclient.la
 
+
+collectdctl_SOURCES = collectdctl.c
+collectdctl_LDADD =
+if BUILD_WITH_LIBSOCKET
+collectdctl_LDADD += -lsocket
+endif
+if BUILD_AIX
+collectdctl_LDADD += -lm
+endif
+collectdctl_LDADD += libcollectdclient/libcollectdclient.la
+collectdctl_DEPENDENCIES = libcollectdclient/libcollectdclient.la
+
+
 pkglib_LTLIBRARIES = 
 
 BUILT_SOURCES = 
 CLEANFILES = 
+
+if BUILD_PLUGIN_AMQP
+pkglib_LTLIBRARIES += amqp.la
+amqp_la_SOURCES = amqp.c \
+		  utils_cmd_putval.c utils_cmd_putval.h \
+		  utils_format_json.c utils_format_json.h
+amqp_la_LDFLAGS = -module -avoid-version $(BUILD_WITH_LIBRABBITMQ_LDFLAGS)
+amqp_la_CPPFLAGS = $(AM_CPPFLAGS) $(BUILD_WITH_LIBRABBITMQ_CPPFLAGS)
+amqp_la_LIBADD = $(BUILD_WITH_LIBRABBITMQ_LIBS)
+collectd_LDADD += "-dlopen" amqp.la
+collectd_DEPENDENCIES += amqp.la
+endif
 
 if BUILD_PLUGIN_APACHE
 pkglib_LTLIBRARIES += apache.la
@@ -499,6 +524,15 @@ collectd_LDADD += "-dlopen" logfile.la
 collectd_DEPENDENCIES += logfile.la
 endif
 
+if BUILD_PLUGIN_LPAR
+pkglib_LTLIBRARIES += lpar.la
+lpar_la_SOURCES = lpar.c
+lpar_la_LDFLAGS = -module -avoid-version
+collectd_LDADD += "-dlopen" lpar.la
+collectd_DEPENDENCIES += lpar.la
+lpar_la_LIBADD = -lperfstat
+endif
+
 if BUILD_PLUGIN_MADWIFI
 pkglib_LTLIBRARIES += madwifi.la
 madwifi_la_SOURCES = madwifi.c madwifi.h
@@ -885,6 +919,16 @@ collectd_LDADD += "-dlopen" protocols.la
 collectd_DEPENDENCIES += protocols.la
 endif
 
+if BUILD_PLUGIN_REDIS
+pkglib_LTLIBRARIES += redis.la
+redis_la_SOURCES = redis.c
+redis_la_LDFLAGS = -module -avoid-version $(BUILD_WITH_LIBCREDIS_LDFLAGS)
+redis_la_CFLAGS = $(AM_CFLAGS) $(BUILD_WITH_LIBCREDIS_CPPFLAGS)
+redis_la_LIBADD = -lcredis
+collectd_LDADD += "-dlopen" redis.la
+collectd_DEPENDENCIES += redis.la
+endif
+
 if BUILD_PLUGIN_ROUTEROS
 pkglib_LTLIBRARIES += routeros.la
 routeros_la_SOURCES = routeros.c
@@ -1042,6 +1086,14 @@ collectd_LDADD += "-dlopen" target_set.la
 collectd_DEPENDENCIES += target_set.la
 endif
 
+if BUILD_PLUGIN_TARGET_V5UPGRADE
+pkglib_LTLIBRARIES += target_v5upgrade.la
+target_v5upgrade_la_SOURCES = target_v5upgrade.c
+target_v5upgrade_la_LDFLAGS = -module -avoid-version
+collectd_LDADD += "-dlopen" target_v5upgrade.la
+collectd_DEPENDENCIES += target_v5upgrade.la
+endif
+
 if BUILD_PLUGIN_TCPCONNS
 pkglib_LTLIBRARIES += tcpconns.la
 tcpconns_la_SOURCES = tcpconns.c
@@ -1078,6 +1130,14 @@ collectd_LDADD += "-dlopen" thermal.la
 collectd_DEPENDENCIES += thermal.la
 endif
 
+if BUILD_PLUGIN_THRESHOLD
+pkglib_LTLIBRARIES += threshold.la
+threshold_la_SOURCES = threshold.c
+threshold_la_LDFLAGS = -module -avoid-version
+collectd_LDADD += "-dlopen" threshold.la
+collectd_DEPENDENCIES += threshold.la
+endif
+
 if BUILD_PLUGIN_TOKYOTYRANT
 pkglib_LTLIBRARIES += tokyotyrant.la
 tokyotyrant_la_SOURCES = tokyotyrant.c
@@ -1096,7 +1156,6 @@ pkglib_LTLIBRARIES += unixsock.la
 unixsock_la_SOURCES = unixsock.c \
 		      utils_cmd_flush.h utils_cmd_flush.c \
 		      utils_cmd_getval.h utils_cmd_getval.c \
-		      utils_cmd_getthreshold.h utils_cmd_getthreshold.c \
 		      utils_cmd_listval.h utils_cmd_listval.c \
 		      utils_cmd_putval.h utils_cmd_putval.c \
 		      utils_cmd_putnotif.h utils_cmd_putnotif.c
@@ -1143,6 +1202,16 @@ collectd_LDADD += "-dlopen" uuid.la
 collectd_DEPENDENCIES += uuid.la
 endif
 
+if BUILD_PLUGIN_VARNISH
+pkglib_LTLIBRARIES += varnish.la
+varnish_la_SOURCES = varnish.c
+varnish_la_LDFLAGS = -module -avoid-version
+varnish_la_CFLAGS = $(AM_CFLAGS) $(BUILD_WITH_LIBVARNISH_CFLAGS)
+varnish_la_LIBADD = $(BUILD_WITH_LIBVARNISH_LIBS)
+collectd_LDADD += "-dlopen" varnish.la
+collectd_DEPENDENCIES += varnish.la
+endif
+
 if BUILD_PLUGIN_VMEM
 pkglib_LTLIBRARIES += vmem.la
 vmem_la_SOURCES = vmem.c
@@ -1182,6 +1251,16 @@ endif
 collectd_DEPENDENCIES += write_http.la
 endif
 
+if BUILD_PLUGIN_WRITE_REDIS
+pkglib_LTLIBRARIES += write_redis.la
+write_redis_la_SOURCES = write_redis.c
+write_redis_la_LDFLAGS = -module -avoid-version $(BUILD_WITH_LIBCREDIS_LDFLAGS)
+write_redis_la_CFLAGS = $(AM_CFLAGS) $(BUILD_WITH_LIBCREDIS_CPPFLAGS)
+write_redis_la_LIBADD = -lcredis
+collectd_LDADD += "-dlopen" write_redis.la
+collectd_DEPENDENCIES += write_redis.la
+endif
+
 if BUILD_PLUGIN_XMMS
 pkglib_LTLIBRARIES += xmms.la
 xmms_la_SOURCES = xmms.c
@@ -1206,12 +1285,14 @@ dist_man_MANS = collectd.1 \
 		collectd.conf.5 \
 		collectd-email.5 \
 		collectd-exec.5 \
+		collectdctl.1 \
 		collectd-java.5 \
 		collectdmon.1 \
 		collectd-nagios.1 \
 		collectd-perl.5 \
 		collectd-python.5 \
 		collectd-snmp.5 \
+		collectd-threshold.5 \
 		collectd-unixsock.5 \
 		types.db.5
 
@@ -1222,6 +1303,7 @@ EXTRA_DIST = types.db pinba.proto
 EXTRA_DIST +=   collectd.conf.pod \
 		collectd-email.pod \
 		collectd-exec.pod \
+		collectdctl.pod \
 		collectd-java.pod \
 		collectdmon.pod \
 		collectd-nagios.pod \
@@ -1229,6 +1311,7 @@ EXTRA_DIST +=   collectd.conf.pod \
 		collectd-python.pod \
 		collectd.pod \
 		collectd-snmp.pod \
+		collectd-threshold.pod \
 		collectd-unixsock.pod \
 		postgresql_default.conf \
 		types.db.pod
