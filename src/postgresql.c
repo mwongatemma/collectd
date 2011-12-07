@@ -131,7 +131,6 @@ typedef struct {
 
 	char *service;
 
-	int datname_column;
 	int schemaname_column;
 	int tablename_column;
 	int indexname_column;
@@ -188,7 +187,6 @@ static c_psql_database_t *c_psql_database_new (const char *name)
 
 	db->service    = NULL;
 
-	db->datname_column = -1;
 	db->schemaname_column = -1;
 	db->tablename_column = -1;
 	db->indexname_column = -1;
@@ -224,7 +222,6 @@ static void c_psql_database_delete (void *data)
 
 	sfree (db->service);
 
-	db->datname_column = -1;
 	db->schemaname_column = -1;
 	db->tablename_column = -1;
 	db->indexname_column = -1;
@@ -369,7 +366,7 @@ static PGresult *c_psql_exec_query_params (c_psql_database_t *db,
 static int c_psql_result_submit (udb_result_t *r, /* {{{ */
 		udb_result_preparation_area_t *r_area,
 		const udb_query_t const *q, udb_query_preparation_area_t *q_area,
-		char *datname, char *schemaname, char *tablename, char *indexname)
+		char *schemaname, char *tablename, char *indexname)
 {
 	int status;
 	value_list_t vl = VALUE_LIST_INIT;
@@ -447,19 +444,6 @@ static int c_psql_result_submit (udb_result_t *r, /* {{{ */
 		return (-ENOMEM);
 	}
 
-	if (datname == NULL || datname[0] == '\0')
-		status = meta_data_add_string (vl.meta, "database",
-				vl.plugin_instance);
-	else
-		status = meta_data_add_string (vl.meta, "database", datname);
-	if (status != 0)
-	{
-		ERROR ("postgresql plugin: meta_data_add_string failed.");
-		meta_data_destroy (vl.meta);
-		vl.meta = NULL;
-		return (status);
-	}
-
 	if (schemaname != NULL)
 	{
 		status = meta_data_add_string (vl.meta, "schema", schemaname);
@@ -510,8 +494,8 @@ static int c_psql_result_submit (udb_result_t *r, /* {{{ */
 static int c_psql_result_handle_result (udb_result_t *r, /* {{{ */
 		udb_query_preparation_area_t *q_area,
 		udb_result_preparation_area_t *r_area,
-		const udb_query_t const *q, char **column_values, char *datname,
-		char *schemaname, char *tablename, char *indexname)
+		const udb_query_t const *q, char **column_values, char *schemaname,
+		char *tablename, char *indexname)
 {
 	size_t i;
 
@@ -525,13 +509,13 @@ static int c_psql_result_handle_result (udb_result_t *r, /* {{{ */
 	for (i = 0; i < r->values_num; i++)
 		r_area->values_buffer[i] = column_values[r_area->values_pos[i]];
 
-	return c_psql_result_submit (r, r_area, q, q_area, datname, schemaname,
-			tablename, indexname);
+	return c_psql_result_submit (r, r_area, q, q_area, schemaname, tablename,
+			indexname);
 } /* }}} int c_psql_result_handle_result */
 
 int c_psql_query_handle_result (const udb_query_t const *q, /* {{{ */
 	udb_query_preparation_area_t *prep_area, char **column_values,
-	char *datname, char *schemaname, char *tablename, char *indexname)
+	char *schemaname, char *tablename, char *indexname)
 {
 	udb_result_preparation_area_t *r_area;
 	udb_result_t *r;
@@ -568,7 +552,7 @@ int c_psql_query_handle_result (const udb_query_t const *q, /* {{{ */
 			r != NULL; r = r->next, r_area = r_area->next)
 	{
 		status = c_psql_result_handle_result (r, prep_area, r_area,
-				q, column_values, datname, schemaname, tablename, indexname);
+				q, column_values, schemaname, tablename, indexname);
 		if (status == 0)
 			success++;
 	}
@@ -676,7 +660,6 @@ static int c_psql_exec_query (c_psql_database_t *db, udb_query_t *q,
 	}
 
 	for (row = 0; row < rows_num; ++row) {
-		char *datname = NULL;
 		char *schemaname = NULL;
 		char *tablename = NULL;
 		char *indexname = NULL;
@@ -701,9 +684,6 @@ static int c_psql_exec_query (c_psql_database_t *db, udb_query_t *q,
 		 * the following values remain NULL if any of the queried values is an
 		 * empty string from being NULL or not.
 		 */
-		if (db->datname_column >= 0 &&
-				column_values[db->datname_column] != '\0')
-			datname = column_values[db->datname_column];
 		if (db->schemaname_column >= 0 &&
 				column_values[db->schemaname_column] != '\0')
 			schemaname = column_values[db->schemaname_column];
@@ -715,7 +695,7 @@ static int c_psql_exec_query (c_psql_database_t *db, udb_query_t *q,
 			indexname = column_values[db->indexname_column];
 
 		status = c_psql_query_handle_result (q, prep_area, column_values,
-				datname, schemaname, tablename, indexname);
+				schemaname, tablename, indexname);
 		if (status != 0) {
 			log_err ("c_psql_query_handle_result failed with status %i.",
 					status);
@@ -914,9 +894,6 @@ static int c_psql_config_database (oconfig_item_t *ci)
 					&db->queries, &db->queries_num);
 		else if (0 == strcasecmp (c->key, "Interval"))
 			cf_util_get_cdtime (c, &db->interval);
-		else if (0 == strcasecmp (c->key, "DatabasenameColumn"))
-			config_set_i ("DatabasenameColumn", &db->datname_column, c,
-					/* min = */ 0);
 		else if (0 == strcasecmp (c->key, "SchemanameColumn"))
 			config_set_i ("SchemanameColumn", &db->schemaname_column, c,
 					/* min = */ 0);
