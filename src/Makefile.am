@@ -43,7 +43,7 @@ collectd_SOURCES = collectd.c collectd.h \
 collectd_CPPFLAGS =  $(AM_CPPFLAGS) $(LTDLINCL)
 collectd_CFLAGS = $(AM_CFLAGS)
 collectd_LDFLAGS = -export-dynamic
-collectd_LDADD =
+collectd_LDADD = -lm
 collectd_DEPENDENCIES =
 
 # Link to these libraries..
@@ -70,7 +70,6 @@ collectd_LDADD += -ldevinfo
 endif
 if BUILD_AIX
 collectd_LDFLAGS += -Wl,-bexpall,-brtllib
-collectd_LDADD += -lm
 endif
 
 # The daemon needs to call sg_init, so we need to link it against libstatgrab,
@@ -1318,6 +1317,8 @@ collectd_LDADD += "-dlopen" zfs_arc.la
 collectd_DEPENDENCIES += zfs_arc.la
 endif
 
+BUILT_SOURCES += $(dist_man_MANS)
+
 dist_man_MANS = collectd.1 \
 		collectd.conf.5 \
 		collectd-email.5 \
@@ -1370,7 +1371,7 @@ EXTRA_DIST +=   collectd.conf.pod \
 	fi
 
 pinba.pb-c.c pinba.pb-c.h: pinba.proto
-	protoc-c --c_out $(builddir) pinba.proto
+	protoc-c --c_out . pinba.proto
 
 install-exec-hook:
 	$(mkinstalldirs) $(DESTDIR)$(sysconfdir)
@@ -1384,3 +1385,8 @@ install-exec-hook:
 	$(INSTALL) -m 0644 $(srcdir)/types.db $(DESTDIR)$(pkgdatadir)/types.db;
 	$(INSTALL) -m 0644 $(srcdir)/postgresql_default.conf \
 		$(DESTDIR)$(pkgdatadir)/postgresql_default.conf;
+
+uninstall-hook:
+	rm -f $(DESTDIR)$(pkgdatadir)/types.db;
+	rm -f $(DESTDIR)$(sysconfdir)/collectd.conf
+	rm -f $(DESTDIR)$(pkgdatadir)/postgresql_default.conf;
